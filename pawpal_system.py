@@ -4,6 +4,7 @@ Backend logic layer for PawPal+ — a pet care planning application.
 """
 
 from __future__ import annotations
+import datetime
 from dataclasses import dataclass, field
 from typing import List
 
@@ -41,6 +42,8 @@ class Task:
     category: str           # "feeding" | "exercise" | "grooming" | "medical" | …
     frequency: str = "daily"
     is_completed: bool = False
+    time: str | None = None            # Scheduled start time, 'HH:MM' format
+    due_date: datetime.date | None = None  # Date this occurrence is due
 
     # ------------------------------------------------------------------
     # Completion helpers
@@ -53,6 +56,35 @@ class Task:
     def mark_incomplete(self) -> None:
         """Reset this task to incomplete."""
         self.is_completed = False
+
+    def get_next_occurrence(self, next_id: int) -> Task | None:
+        """Return a fresh Task for the next recurrence of this task.
+
+        Args:
+            next_id: The id to assign to the new Task instance.
+
+        Returns:
+            A new Task due one period later, or None if frequency is "once".
+        """
+        if self.frequency == "once":
+            return None
+        delta = (
+            datetime.timedelta(days=1)
+            if self.frequency == "daily"
+            else datetime.timedelta(weeks=1)
+        )
+        base = self.due_date if self.due_date is not None else datetime.date.today()
+        return Task(
+            id=next_id,
+            title=self.title,
+            duration_minutes=self.duration_minutes,
+            priority=self.priority,
+            category=self.category,
+            frequency=self.frequency,
+            is_completed=False,
+            time=self.time,
+            due_date=base + delta,
+        )
 
     # ------------------------------------------------------------------
     # Attribute updates
@@ -173,6 +205,31 @@ class Pet:
             List of incomplete Task objects.
         """
         return [t for t in self.tasks if not t.is_completed]
+
+    def complete_task(self, task_id: int, next_task_id: int) -> Task | None:
+        """Mark a task complete and automatically queue its next occurrence.
+
+        For recurring tasks ("daily" or "weekly") a new Task is appended to
+        this pet's task list so the care schedule stays up to date.
+
+        Args:
+            task_id:      The id of the Task to complete.
+            next_task_id: The id to assign to the newly created recurrence.
+
+        Returns:
+            The next-occurrence Task if one was created, otherwise None.
+
+        Raises:
+            ValueError: If no task with *task_id* exists on this pet.
+        """
+        for task in self.tasks:
+            if task.id == task_id:
+                task.mark_complete()
+                next_task = task.get_next_occurrence(next_task_id)
+                if next_task is not None:
+                    self.tasks.append(next_task)
+                return next_task
+        raise ValueError(f"No task with id {task_id} found for pet '{self.name}'.")
 
     # ------------------------------------------------------------------
     # Care-needs management
@@ -329,6 +386,7 @@ class Scheduler:
     def __init__(self, owner: Owner) -> None:
         self.owner: Owner = owner
         self.scheduled_tasks: List[Task] = []
+        self.conflict_warnings: List[str] = []  # Populated by generate_daily_plan()
 
     # ------------------------------------------------------------------
     # Core scheduling
@@ -338,19 +396,25 @@ class Scheduler:
         """Build an ordered list of tasks that fits within the owner's
         available time, ranked by priority then shortest-first.
 
+        After selecting tasks, conflict detection runs automatically and
+        any warnings are stored in ``self.conflict_warnings``.
+
         Side-effects:
             Populates ``self.scheduled_tasks`` with the chosen tasks.
+            Populates ``self.conflict_warnings`` with any detected issues.
 
         Returns:
             The ordered list of scheduled Task objects.
         """
         self.scheduled_tasks = []
+        self.conflict_warnings = []
 
         pending = self.owner.get_pending_tasks()
         sorted_tasks = self.organize_by_priority(pending)
         self.scheduled_tasks = self.filter_by_duration(
             sorted_tasks, self.owner.get_available_time()
         )
+        self.conflict_warnings = self.detect_conflicts()
         return self.scheduled_tasks
 
     def organize_by_priority(self, tasks: List[Task]) -> List[Task]:
@@ -404,6 +468,139 @@ class Scheduler:
             False otherwise.
         """
         return any(t.title == task.title for t in self.scheduled_tasks)
+
+    # ------------------------------------------------------------------
+    # Sorting by time
+    # ------------------------------------------------------------------
+
+    def sort_by_time(self, tasks: List[Task]) -> List[Task]:
+        """Sort tasks by their scheduled start time ('HH:MM').
+
+        Tasks without a ``time`` value sort to the end of the list.
+
+        Args:
+            tasks: The Task objects to sort.
+
+        Returns:
+            A new list ordered by ascending start time.
+        """
+        return sorted(tasks, key=lambda t: t.time if t.time is not None else "99:99")
+
+    # ------------------------------------------------------------------
+    # Filtering
+    # ------------------------------------------------------------------
+
+    def filter_by_status(self, completed: bool) -> List[Task]:
+        """Return all tasks across every pet filtered by completion status.
+
+        Args:
+            completed: Pass True to retrieve completed tasks, False for pending.
+
+        Returns:
+            A flat list of matching Task objects.
+        """
+        return [t for t in self.owner.get_all_tasks() if t.is_completed == completed]
+
+    def filter_by_pet(self, pet_name: str) -> List[Task]:
+        """Return all tasks belonging to a specific pet (case-insensitive).
+
+        Args:
+            pet_name: The name of the pet to look up.
+
+        Returns:
+            A list of that pet's Task objects, or an empty list if not found.
+        """
+        for pet in self.owner.pets:
+            if pet.name.lower() == pet_name.lower():
+                return list(pet.tasks)
+        return []
+
+    # ------------------------------------------------------------------
+    # Conflict detection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _to_datetime(time_str: str) -> datetime.datetime:
+        """Parse an 'HH:MM' string into a comparable datetime object."""
+        h, m = map(int, time_str.split(":"))
+        return datetime.datetime(2000, 1, 1, h, m)
+
+    def _task_pet_map(self) -> dict[int, str]:
+        """Return a mapping of task id → pet name for every registered task."""
+        return {
+            task.id: pet.name
+            for pet in self.owner.pets
+            for task in pet.tasks
+        }
+
+    def detect_conflicts(self) -> List[str]:
+        """Analyse the scheduled plan and return human-readable conflict warnings.
+
+        Checks are run against ``self.scheduled_tasks`` (populated by
+        ``generate_daily_plan``).  No exceptions are raised; problems are
+        reported as plain strings so callers can decide how to surface them.
+
+        Conflict types detected:
+
+        * **Budget overflow** — the total scheduled time exceeds the owner's
+          daily limit (can happen if tasks are added to ``scheduled_tasks``
+          directly, bypassing ``filter_by_duration``).
+        * **Unschedulable task** — a pending task is longer than the entire
+          daily budget and can never be selected.
+        * **Time overlap** — two scheduled tasks with explicit ``time`` values
+          have windows that intersect, meaning they cannot both run as planned.
+          The warning names both tasks *and* their respective pets so same-pet
+          and cross-pet conflicts are equally clear.
+
+        Returns:
+            A list of warning strings.  An empty list means no conflicts found.
+        """
+        warnings: List[str] = []
+        budget = self.owner.get_available_time()
+        pet_of = self._task_pet_map()
+
+        # 1. Budget overflow in the current plan
+        used = sum(t.duration_minutes for t in self.scheduled_tasks)
+        if used > budget:
+            warnings.append(
+                f"WARNING — Budget overflow: {used} min scheduled "
+                f"but only {budget} min available."
+            )
+
+        # 2. Pending tasks that can never fit inside the budget
+        for task in self.owner.get_pending_tasks():
+            if task.duration_minutes > budget:
+                pet_name = pet_of.get(task.id, "unknown pet")
+                warnings.append(
+                    f"WARNING — Unschedulable task: '{task.title}' "
+                    f"({pet_name}, {task.duration_minutes} min) exceeds "
+                    f"the daily budget of {budget} min and can never be scheduled."
+                )
+
+        # 3. Time-window overlaps between timed tasks in the scheduled plan
+        timed = [
+            (t, self._to_datetime(t.time))
+            for t in self.scheduled_tasks
+            if t.time is not None
+        ]
+        for i, (task_a, start_a) in enumerate(timed):
+            end_a = start_a + datetime.timedelta(minutes=task_a.duration_minutes)
+            for task_b, start_b in timed[i + 1:]:
+                end_b = start_b + datetime.timedelta(minutes=task_b.duration_minutes)
+                if start_a < end_b and start_b < end_a:
+                    pet_a = pet_of.get(task_a.id, "unknown pet")
+                    pet_b = pet_of.get(task_b.id, "unknown pet")
+                    same = pet_a == pet_b
+                    scope = f"same pet: {pet_a}" if same else f"cross-pet: {pet_a} / {pet_b}"
+                    warnings.append(
+                        f"WARNING — Time overlap ({scope}): "
+                        f"'{task_a.title}' starts {task_a.time} "
+                        f"and runs {task_a.duration_minutes} min, "
+                        f"overlapping '{task_b.title}' which starts {task_b.time} "
+                        f"and runs {task_b.duration_minutes} min."
+                    )
+
+        return warnings
 
     # ------------------------------------------------------------------
     # Explanation

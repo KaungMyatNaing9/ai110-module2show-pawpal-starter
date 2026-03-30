@@ -41,3 +41,34 @@ pip install -r requirements.txt
 5. Add tests to verify key behaviors.
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
+
+## Smarter Scheduling
+
+PawPal+ has been extended with four intelligent scheduling features, all implemented in `pawpal_system.py` and demonstrated in `main.py`.
+
+### Sorting tasks by time
+
+`Scheduler.sort_by_time(tasks)` orders any list of tasks by their `time` field (`'HH:MM'` format) using Python's `sorted()` with a lambda key. Tasks without a scheduled time sort to the end of the list. This gives owners a chronological view of their day rather than an arbitrary insertion order.
+
+### Filtering tasks
+
+Two filter methods make it easy to query the task list without looping manually:
+
+- `filter_by_status(completed)` — returns all tasks across every pet that match a given completion state (pending or done).
+- `filter_by_pet(pet_name)` — returns all tasks belonging to a named pet (case-insensitive). Both return empty lists gracefully when nothing matches, so callers never need to guard against `None`.
+
+### Recurring task automation
+
+`Task` now carries optional `time` and `due_date` fields. Calling `Pet.complete_task(task_id, next_task_id)` marks a task done and, for `"daily"` or `"weekly"` tasks, automatically appends a fresh copy to the pet's task list with the next due date calculated via `datetime.timedelta`. One-off tasks (`frequency="once"`) produce no recurrence. This removes the manual work of re-adding routine care items every day.
+
+### Conflict detection
+
+`Scheduler.detect_conflicts()` runs automatically at the end of `generate_daily_plan()` and stores results in `scheduler.conflict_warnings` — a plain list of strings, so no exceptions are raised and the caller decides how to surface them. Three conflict types are checked:
+
+| Conflict type | What it catches |
+|---|---|
+| **Budget overflow** | Total scheduled minutes exceed the owner's daily limit |
+| **Unschedulable task** | A single task is longer than the entire daily budget |
+| **Time overlap** | Two scheduled tasks have intersecting time windows |
+
+Overlap warnings name both tasks and their pets (e.g. `cross-pet: Oliver / Bella` or `same pet: Bella`), making it immediately clear whether a conflict is within one animal's routine or spans multiple pets.

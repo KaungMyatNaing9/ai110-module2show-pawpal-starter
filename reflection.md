@@ -33,10 +33,14 @@ There is no design change from UML design to implementation. It might be due to 
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
 - How did you decide which constraints mattered most?
 
+The scheduler considers three constraints: time budget, priority, and conflicts. The owner's daily_available_time is the hard limit: filter_by_duration ensures the cumulative task duration never exceeds what is available, and get_remaining_time tracks what is left. Within that budget, organize_by_priority ranks tasks from "high" to "medium" to "low" so the most critical care always gets scheduled first. check_conflicts then acts as a safety gate before any task is added to the final plan. Time was treated as the most important constraint because no matter how high a task's priority is, it simply cannot be done if there is no time for it: priority only matters within the time that exists.
+
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
+
+From my perspective, the scheduler makes a tradeoff by using a simple greedy approach that prioritizes high-priority tasks first instead of trying to find the most optimal combination of tasks. This means it might not always maximize the number of tasks completed within a limited time, but it keeps the logic easy to understand and predictable. I think this is reasonable because, in real life, pet owners usually think in terms of urgency rather than optimization. Also, the number of tasks in this app is small, so the difference between greedy and optimal solutions is not very significant. Keeping the algorithm simple makes it easier to maintain and explain, which is important for a practical application like this.
 
 ---
 

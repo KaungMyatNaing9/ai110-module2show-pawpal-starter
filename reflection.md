@@ -7,8 +7,16 @@
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
 
-TMy UML design includes four main classes: Owner, Pet, Task, and Scheduler. The Owner class manages user information, availability, and preferences, and connects to pets and tasks. The Pet class stores details about each pet and its specific care requirements, while the Task class represents individual care activities with attributes like duration, priority, and status. The Scheduler class is responsible for generating an optimized daily plan by considering tasks, priorities, and the owner’s constraints, and it also provides explanations for the chosen schedule.
+My UML design includes four main classes: Owner, Pet, Task, and Scheduler. 
+Task - the atomic unit of work. It represents a single pet care activity (e.g., feeding, grooming) and holds data like duration, priority, category, and completion status. Its methods manage its own state: marking itself complete/incomplete, updating duration or priority, and producing a human-readable summary via get_details().
 
+Pet - models an individual pet and owns the tasks specific to that animal's care. It holds the pet's identity (name, species, age) and a care_needs list describing what the pet requires. Its methods let you attach or detach tasks and read or replace care needs. Because tasks are stored directly on the pet, a pet's task list is removed if the pet is removed (composition).
+
+Owner - the central actor in the domain. It holds a daily_available_time budget, scheduling preferences, a roster of Pet objects, and a master tasks list for cross-pet or non-pet tasks (e.g., "buy supplies"). It manages its own collections with add_pet/remove_pet and add_task/remove_task, and exposes get_available_time() for the scheduler to read.
+
+Scheduler - the planning engine. It is initialized with an Owner and generates a daily plan that fits within the owner's time budget. It sorts tasks by priority (organize_by_priority), trims the list to what fits (filter_by_duration), detects conflicts (check_conflicts), and produces a plain-language rationale (explain_plan). It does not own pets or tasks — it only reads them, keeping its responsibility focused on scheduling logic rather than data management.
+
+The separation of concerns is deliberate: Task and Pet manage their own data, Owner aggregates everything the user controls, and Scheduler is the only class responsible for decision-making logic.
 
 **b. Design changes**
 

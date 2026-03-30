@@ -22,6 +22,7 @@ The separation of concerns is deliberate: Task and Pet manage their own data, Ow
 
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
+There is no design change from UML design to implementation. It might be due to me using design as reference while leting AI code the skeleton.
 
 ---
 

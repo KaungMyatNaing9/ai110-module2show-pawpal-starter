@@ -42,6 +42,34 @@ pip install -r requirements.txt
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
 
+## Testing PawPal+
+
+### Running the tests
+
+```bash
+python -m pytest tests/test_pawpal.py -v
+```
+
+### What the test suite covers
+
+18 pytest functions across five areas:
+
+| Area | Tests |
+|---|---|
+| **Task sorting** | Chronological order is correct for mixed `'HH:MM'` values; tasks with no time sort last |
+| **Recurring tasks** | Daily tasks recur +1 day, weekly tasks recur +7 days, one-off tasks produce no follow-up; new occurrence is appended to the pet's task list |
+| **Conflict detection** | Same-pet time overlaps are flagged, cross-pet overlaps are labelled `cross-pet`, tasks that exceed the daily budget are reported as unschedulable, non-overlapping tasks produce zero warnings |
+| **Edge cases** | Pet with no tasks, owner with no pets, all tasks already completed, duplicate task IDs silently ignored |
+| **Filtering** | `filter_by_pet` returns only the correct pet's tasks; unknown pet name returns an empty list |
+
+### Confidence level
+
+**★★★★☆ (4 / 5)**
+
+The core scheduling behaviours — sorting, recurrence, conflict detection, and filtering — are each covered by multiple targeted tests, and all 18 pass. The rating stops short of 5 stars because the tests run against in-memory objects only; there is no coverage of the Streamlit UI layer, persistent storage, or inputs that arrive as raw user strings (e.g. malformed `'HH:MM'` values or out-of-range priorities). Those paths would need additional tests before the system could be considered fully reliable in production.
+
+---
+
 ## Smarter Scheduling
 
 PawPal+ has been extended with four intelligent scheduling features, all implemented in `pawpal_system.py` and demonstrated in `main.py`.
